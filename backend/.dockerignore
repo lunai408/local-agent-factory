@@ -1,0 +1,35 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data (mounted as volume)
+data/
+
+# Documentation
+*.md
+!README.md
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,256 @@
+# docker-compose.yml
+# Local Agent Memory - Full Stack AI Agent Platform
+#
+# Profiles:
+#   (default)  - SurrealDB only
+#   migrate    - Run database migrations
+#   seed       - Load sample data
+#   mcp        - MCP servers only
+#   app        - Backend + Agent UI
+#   full       - All services
+#
+# Usage:
+#   docker compose up -d                     # SurrealDB only
+#   docker compose --profile full up -d      # Full stack
+#   docker compose --profile migrate up      # Run migrations
+
+services:
+  # =============================================================================
+  # DATABASE
+  # =============================================================================
+  surrealdb:
+    image: surrealdb/surrealdb:${SURREALDB_VERSION:-v2}
+    container_name: surrealdb
+    user: root
+    command:
+      - start
+      - --user=${SURREALDB_USERNAME:-root}
+      - --pass=${SURREALDB_PASSWORD:-root}
+      - --bind=0.0.0.0:8000
+      - --log=info
+      - file:/data/database.db
+    ports:
+      - "${SURREALDB_PORT:-8000}:8000"
+    volumes:
+      - surrealdb-data:/data
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "/surreal", "isready", "--endpoint", "http://localhost:8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # Database migration service
+  surrealdb-migrate:
+    image: surrealdb/surrealdb:${SURREALDB_VERSION:-v2}
+    profiles: ["migrate"]
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+    command:
+      - import
+      - --endpoint=http://surrealdb:8000
+      - --username=${SURREALDB_USERNAME:-root}
+      - --password=${SURREALDB_PASSWORD:-root}
+      - --namespace=${SURREALDB_NAMESPACE:-local_agent_memory}
+      - --database=${SURREALDB_DATABASE:-main_database}
+      - /migrations/schema.surql
+    volumes:
+      - ./database/migrations:/migrations:ro
+    networks:
+      - agent-network
+    restart: "no"
+
+  # Database seed service
+  surrealdb-seed:
+    image: surrealdb/surrealdb:${SURREALDB_VERSION:-v2}
+    profiles: ["seed"]
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+    command:
+      - import
+      - --endpoint=http://surrealdb:8000
+      - --username=${SURREALDB_USERNAME:-root}
+      - --password=${SURREALDB_PASSWORD:-root}
+      - --namespace=${SURREALDB_NAMESPACE:-local_agent_memory}
+      - --database=${SURREALDB_DATABASE:-main_database}
+      - /seeds/data.surql
+    volumes:
+      - ./database/seeds:/seeds:ro
+    networks:
+      - agent-network
+    restart: "no"
+
+  # =============================================================================
+  # MCP SERVERS
+  # =============================================================================
+
+  # PDF Generator MCP
+  mcp-pdf:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile.pdf
+    container_name: mcp-pdf
+    profiles: ["mcp", "full"]
+    ports:
+      - "${MCP_PDF_PORT:-3001}:3001"
+    volumes:
+      - mcp-data:/data
+    environment:
+      - PDFS_DIR=/data/pdfs
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # Chart Generator MCP
+  mcp-chart:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile.chart
+    container_name: mcp-chart
+    profiles: ["mcp", "full"]
+    ports:
+      - "${MCP_CHART_PORT:-3003}:3003"
+    volumes:
+      - mcp-data:/data
+    environment:
+      - CHARTS_DIR=/data/charts
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ComfyUI Image Generator MCP
+  mcp-comfy:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile.comfy
+    container_name: mcp-comfy
+    profiles: ["mcp", "full"]
+    ports:
+      - "${MCP_COMFY_PORT:-3002}:3002"
+    volumes:
+      - mcp-data:/data
+    environment:
+      - GENERATED_IMAGES_DIR=/data/images
+      - COMFY_URL=${COMFY_URL:-http://host.docker.internal:8188}
+      - COMFY_TIMEOUT=1800
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # =============================================================================
+  # BACKEND (Agno OS)
+  # =============================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    profiles: ["app", "full"]
+    ports:
+      - "${BACKEND_PORT:-7777}:7777"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      # Model provider
+      - MODEL_PROVIDER=${MODEL_PROVIDER:-local}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL_ID=${OPENAI_MODEL_ID:-gpt-4o}
+      # Ollama (on host)
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_INFER_MODEL=${OLLAMA_INFER_MODEL:-ministral-3:3b}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      # SurrealDB
+      - SURREALDB_URL=ws://surrealdb:8000
+      - SURREALDB_USERNAME=${SURREALDB_USERNAME:-root}
+      - SURREALDB_PASSWORD=${SURREALDB_PASSWORD:-root}
+      - SURREALDB_NAMESPACE=${SURREALDB_NAMESPACE:-local_agent_memory}
+      - SURREALDB_DATABASE=${SURREALDB_DATABASE:-main_database}
+      # MCP servers
+      - MCP_PDF_URL=http://mcp-pdf:3001
+      - MCP_CHART_URL=http://mcp-chart:3003
+      - MCP_COMFY_URL=http://mcp-comfy:3002
+      # ComfyUI (on host)
+      - COMFY_URL=http://host.docker.internal:8188
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+      mcp-pdf:
+        condition: service_healthy
+      mcp-chart:
+        condition: service_healthy
+      mcp-comfy:
+        condition: service_healthy
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # =============================================================================
+  # FRONTEND (Agent UI)
+  # =============================================================================
+  agent-ui:
+    build:
+      context: ./agent-ui
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT:-7777}
+    container_name: agent-ui
+    profiles: ["app", "full"]
+    ports:
+      - "${AGENT_UI_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT:-7777}
+    depends_on:
+      - backend
+    networks:
+      - agent-network
+    restart: unless-stopped
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  agent-network:
+    driver: bridge
+    name: local-agent-network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  surrealdb-data:
+    name: local-agent-memory-surrealdb
+  mcp-data:
+    name: local-agent-memory-mcp

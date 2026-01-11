@@ -1,0 +1,51 @@
+# PDF Generator MCP Dockerfile
+# Requires Pandoc and LaTeX for PDF generation
+
+# ===== Builder stage =====
+FROM python:3.13-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+WORKDIR /app
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev
+
+# ===== Runtime stage =====
+FROM python:3.13-slim
+
+# Install Pandoc and LaTeX for PDF generation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pandoc \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    texlive-lang-french \
+    lmodern \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application code
+COPY pdf_generator/ ./pdf_generator/
+COPY shared/ ./shared/
+
+# Environment setup
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+ENV PDFS_DIR="/data/pdfs"
+
+# Create data directory
+RUN mkdir -p /data/pdfs
+
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:3001/health || exit 1
+
+CMD ["python", "-m", "pdf_generator.server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "3001"]

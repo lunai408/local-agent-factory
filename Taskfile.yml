@@ -1,0 +1,457 @@
+# Taskfile.yml
+version: "3"
+
+vars:
+  OLLAMA_SCRIPTS_DIR: models/ollama/scripts
+  # Permet de skip l'installation Ollama si besoin:
+  #   SETUP_SKIP_OLLAMA=1 task setup
+  SETUP_SKIP_OLLAMA: '{{default "0" .SETUP_SKIP_OLLAMA}}'
+  COMFY_DIR: models/comfy/scripts
+  SETUP_SKIP_COMFY: '{{default "0" .SETUP_SKIP_COMFY}}'
+
+tasks:
+  default:
+    desc: "Affiche les tasks"
+    cmds:
+      - task -l
+
+  # -------------------------
+  # Docker
+  # -------------------------
+  docker:up:
+    desc: "Démarre les services Docker (sans Ollama en Docker)"
+    cmds:
+      - docker compose up -d --build
+
+  docker:down:
+    desc: "Stoppe les services Docker"
+    cmds:
+      - docker compose down
+
+  docker:logs:
+    desc: "Logs des services Docker"
+    cmds:
+      - docker compose logs -f
+
+  # -------------------------
+  # Ollama - install
+  # -------------------------
+  ollama:chmod:
+    desc: "Rend les scripts shell exécutables (Linux/Mac)"
+    platforms: [linux, darwin]
+    cmds:
+      - chmod +x {{.OLLAMA_SCRIPTS_DIR}}/*.sh
+
+  ollama:install:unix:
+    desc: "Installe Ollama sur Linux/Mac + chmod scripts"
+    platforms: [linux, darwin]
+    deps: [ollama:chmod]
+    cmds:
+      - ./{{.OLLAMA_SCRIPTS_DIR}}/install.sh
+
+  ollama:install:windows:
+    desc: "Installe Ollama sur Windows (winget) via PowerShell"
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.OLLAMA_SCRIPTS_DIR}}\install.ps1
+
+  ollama:install:
+    desc: "Installe Ollama selon l'OS (auto)"
+    cmds:
+      - task: ollama:install:unix
+      - task: ollama:install:windows
+    silent: true
+
+  # -------------------------
+  # Ollama - uninstall
+  # -------------------------
+  ollama:uninstall:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - chmod +x {{.OLLAMA_SCRIPTS_DIR}}/uninstall.sh
+      - ./{{.OLLAMA_SCRIPTS_DIR}}/uninstall.sh
+
+  ollama:uninstall:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.OLLAMA_SCRIPTS_DIR}}\uninstall.ps1
+
+  ollama:uninstall:
+    desc: "Désinstalle Ollama (host). Purge data: OLLAMA_PURGE_DATA=1"
+    cmds:
+      - task: ollama:uninstall:unix
+      - task: ollama:uninstall:windows
+    silent: true
+
+  # -------------------------
+  # Ollama - start / pull / doctor / stop
+  # -------------------------
+  ollama:start:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.OLLAMA_SCRIPTS_DIR}}/start.sh
+
+  ollama:start:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.OLLAMA_SCRIPTS_DIR}}\start.ps1
+
+  ollama:start:
+    desc: "Démarre Ollama en local (auto OS)"
+    cmds:
+      - task: ollama:start:unix
+      - task: ollama:start:windows
+    silent: true
+
+  ollama:pull:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.OLLAMA_SCRIPTS_DIR}}/pull.sh
+
+  ollama:pull:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.OLLAMA_SCRIPTS_DIR}}\pull.ps1
+
+  ollama:pull:
+    desc: "Pull les modèles configurés via env (auto OS)"
+    cmds:
+      - task: ollama:pull:unix
+      - task: ollama:pull:windows
+    silent: true
+
+  ollama:doctor:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.OLLAMA_SCRIPTS_DIR}}/doctor.sh
+
+  ollama:doctor:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.OLLAMA_SCRIPTS_DIR}}\doctor.ps1
+
+  ollama:doctor:
+    desc: "Vérifie qu'Ollama est joignable (auto OS)"
+    cmds:
+      - task: ollama:doctor:unix
+      - task: ollama:doctor:windows
+    silent: true
+
+  ollama:stop:
+    desc: "Stop Ollama (auto OS)"
+    cmds:
+      - |
+        case "{{OS}}" in
+          darwin)
+            echo "Stopping Ollama on macOS"
+            pkill -f ollama || true
+            ;;
+          linux)
+            echo "Stopping Ollama on Linux"
+            sudo systemctl stop ollama || true
+            ;;
+          windows)
+            echo "Stopping Ollama on Windows"
+            powershell -Command "Stop-Process -Name ollama -Force" || true
+            ;;
+        esac
+
+  # -------------------------------------------------
+  # Ollama - setup complet
+  # -------------------------------------------------
+  ollama:setup:
+    desc: "Setup Ollama complet (install + start + pull)"
+    cmds:
+      - task: ollama:install
+      - task: ollama:start
+      - task: ollama:pull
+      - task: ollama:doctor
+
+  # -------------------------------------------------
+  # ComfyUI - install
+  # -------------------------------------------------
+  comfy:chmod:
+    platforms: [linux, darwin]
+    cmds:
+      - chmod +x {{.COMFY_DIR}}/*.sh
+
+  comfy:install:unix:
+    platforms: [linux, darwin]
+    deps: [comfy:chmod]
+    cmds:
+      - ./{{.COMFY_DIR}}/install.sh
+      - |
+        echo "If comfy is not found, run: pipx ensurepath && exec \$SHELL -l"
+
+  comfy:install:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.COMFY_DIR}}\install.ps1
+
+  comfy:install:
+    cmds:
+      - task: comfy:install:unix
+      - task: comfy:install:windows
+    silent: true
+
+  # -------------------------------------------------
+  # ComfyUI - uninstall
+  # -------------------------------------------------
+  comfy:uninstall:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - chmod +x {{.COMFY_DIR}}/uninstall.sh
+      - ./{{.COMFY_DIR}}/uninstall.sh
+
+  comfy:uninstall:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.COMFY_DIR}}\uninstall.ps1
+
+  comfy:uninstall:
+    desc: "Désinstalle ComfyUI + comfy-cli (host). Purge workspace: COMFY_PURGE_WORKSPACE=1"
+    cmds:
+      - task: comfy:uninstall:unix
+      - task: comfy:uninstall:windows
+    silent: true
+
+  # -------------------------------------------------
+  # ComfyUI - start
+  # -------------------------------------------------
+  comfy:start:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.COMFY_DIR}}/start.sh
+
+  comfy:start:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.COMFY_DIR}}\start.ps1
+
+  comfy:start:
+    cmds:
+      - task: comfy:start:unix
+      - task: comfy:start:windows
+    silent: true
+
+  # -------------------------------------------------
+  # ComfyUI - pull models
+  # -------------------------------------------------
+  comfy:pull:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.COMFY_DIR}}/pull_models.sh
+
+  comfy:pull:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.COMFY_DIR}}\pull_models.ps1
+
+  comfy:pull:
+    cmds:
+      - task: comfy:pull:unix
+      - task: comfy:pull:windows
+    silent: true
+
+  # -------------------------------------------------
+  # ComfyUI - doctor
+  # -------------------------------------------------
+  comfy:doctor:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.COMFY_DIR}}/doctor.sh
+
+  comfy:doctor:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.COMFY_DIR}}\doctor.ps1
+
+  comfy:doctor:
+    cmds:
+      - task: comfy:doctor:unix
+      - task: comfy:doctor:windows
+    silent: true
+
+  # -------------------------------------------------
+  # ComfyUI - stop
+  # -------------------------------------------------
+  comfy:stop:unix:
+    platforms: [linux, darwin]
+    cmds:
+      - ./{{.COMFY_DIR}}/stop.sh
+
+  comfy:stop:windows:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File .\{{.COMFY_DIR}}\stop.ps1
+
+  comfy:stop:
+    cmds:
+      - task: comfy:stop:unix
+      - task: comfy:stop:windows
+    silent: true
+
+  # -------------------------------------------------
+  # ComfyUI - setup complet
+  # -------------------------------------------------
+  comfy:setup:
+    desc: "ComfyUI setup complet: install + start + (download models) + doctor"
+    cmds:
+      - task: comfy:install
+      - task: comfy:pull
+      - task: comfy:start
+      - task: comfy:doctor
+
+  # -------------------------------------------------
+  # Global setup
+  # -------------------------------------------------
+  setup:
+    desc: "Setup complet (Ollama host + Docker)"
+    cmds:
+      - |
+        if [ "{{.SETUP_SKIP_OLLAMA}}" = "1" ]; then
+          echo "Skipping Ollama setup (SETUP_SKIP_OLLAMA=1)"
+        else
+          task ollama:setup
+        fi
+      - |
+        if [ "{{.SETUP_SKIP_COMFY}}" = "1" ]; then
+          echo "Skipping ComfyUI setup (SETUP_SKIP_COMFY=1)"
+        else
+          task comfy:setup
+        fi
+      - task docker:up
+
+  # -------------------------------------------------
+  # Start (dev loop)
+  # -------------------------------------------------
+  start:
+    desc: "Démarre Ollama (host) + Docker (dev)"
+    cmds:
+      - task ollama:start
+      - task comfy:start
+      - task docker:up
+
+  # -------------------------------------------------
+  # Global Stop
+  # -------------------------------------------------
+  stop:
+    desc: "Stop Ollama + Docker"
+    cmds:
+      - task ollama:stop
+      - task comfy:stop
+      - docker compose down
+
+  # -------------------------------------------------
+  # Global Uninstall
+  # -------------------------------------------------
+  uninstall:
+    desc: "Stop Docker + désinstalle Ollama & ComfyUI (host)"
+    cmds:
+      - task docker:down
+      - task ollama:uninstall
+      - task comfy:uninstall
+
+  # -------------------------------------------------
+  # Docker Profiles
+  # -------------------------------------------------
+  docker:full:
+    desc: "Start all services (full stack)"
+    cmds:
+      - docker compose --profile full up -d --build
+
+  docker:app:
+    desc: "Start backend + UI (without MCP)"
+    cmds:
+      - docker compose --profile app up -d --build
+
+  docker:mcp:
+    desc: "Start MCP servers only"
+    cmds:
+      - docker compose --profile mcp up -d --build
+
+  docker:migrate:
+    desc: "Run database migrations"
+    cmds:
+      - docker compose --profile migrate up
+
+  docker:seed:
+    desc: "Load sample data into database"
+    cmds:
+      - docker compose --profile seed up
+
+  # -------------------------------------------------
+  # Backend (local dev)
+  # -------------------------------------------------
+  backend:dev:
+    desc: "Run backend in dev mode (hot reload)"
+    dir: backend
+    cmds:
+      - uv run uvicorn agentos:app --reload --port 7777
+
+  backend:install:
+    desc: "Install backend dependencies"
+    dir: backend
+    cmds:
+      - uv sync
+
+  # -------------------------------------------------
+  # Agent UI (local dev)
+  # -------------------------------------------------
+  ui:dev:
+    desc: "Run agent-ui in dev mode"
+    dir: agent-ui
+    cmds:
+      - pnpm dev
+
+  ui:build:
+    desc: "Build agent-ui for production"
+    dir: agent-ui
+    cmds:
+      - pnpm build
+
+  ui:install:
+    desc: "Install agent-ui dependencies"
+    dir: agent-ui
+    cmds:
+      - pnpm install
+
+  # -------------------------------------------------
+  # MCP Servers (local dev)
+  # -------------------------------------------------
+  mcp:pdf:
+    desc: "Run PDF generator MCP locally"
+    dir: mcp
+    cmds:
+      - uv run pdf-generator-mcp
+
+  mcp:chart:
+    desc: "Run chart generator MCP locally"
+    dir: mcp
+    cmds:
+      - uv run chart-generator-mcp
+
+  mcp:comfy:
+    desc: "Run ComfyUI MCP locally"
+    dir: mcp
+    cmds:
+      - uv run comfy-image-mcp
+
+  mcp:install:
+    desc: "Install MCP dependencies"
+    dir: mcp
+    cmds:
+      - uv sync
+
+  # -------------------------------------------------
+  # Development mode (all local)
+  # -------------------------------------------------
+  dev:
+    desc: "Start full dev environment (DB + Ollama + ComfyUI + backend)"
+    cmds:
+      - task docker:up
+      - task ollama:start
+      - task comfy:start
+      - |
+        echo "Backend: run 'task backend:dev' in another terminal"
+        echo "UI: run 'task ui:dev' in another terminal"
